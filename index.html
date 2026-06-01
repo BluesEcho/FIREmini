@@ -1,0 +1,1237 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>FIRE 财务自由计算器</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+    <style>
+        /* ============================================================
+           FIRE 财务自由计算器 — 设计系统
+           深蓝 + 灰白主调，翠绿强调色，现代金融工具风格
+           侧栏布局：左侧输入参数，右侧结果+图表，一屏显示
+
+           三档断点：
+             Desktop  ≥ 1024px  双栏 436px 左栏
+             Tablet   641–1023  双栏 320px 左栏，紧凑
+             Mobile   ≤ 640px   单栏堆叠，手风琴卡片
+           ============================================================ */
+        :root {
+            --bg:        #f0f4f8;
+            --surface:   #ffffff;
+            --fg:        #0f172a;
+            --muted:     #64748b;
+            --border:    #e2e8f0;
+            --accent:    #059669;
+            --accent-h:  #047857;
+            --navy:      #1e3a5f;
+            --navy-d:    #0f2440;
+            --navy-l:    #334155;
+            --danger:    #dc2626;
+            --warning:   #d97706;
+            --info:      #2563eb;
+            --radius:    10px;
+            --radius-sm: 6px;
+            --shadow-sm: 0 1px 3px rgba(15, 23, 42, 0.06), 0 1px 2px rgba(15, 23, 42, 0.04);
+            --shadow:    0 4px 16px rgba(15, 23, 42, 0.06), 0 1px 4px rgba(15, 23, 42, 0.04);
+            --font:      -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', system-ui, sans-serif;
+            --font-mono: 'SF Mono', 'JetBrains Mono', 'Consolas', monospace;
+        }
+
+        *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+        html {
+            font-size: 16px;
+            -webkit-font-smoothing: antialiased;
+            -moz-osx-font-smoothing: grayscale;
+        }
+
+        /* ---- Full-height layout (desktop + tablet) ---- */
+        body {
+            font-family: var(--font);
+            background: var(--bg);
+            color: var(--fg);
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+        }
+
+        /* ---- Compact header ---- */
+        .app-header {
+            flex-shrink: 0;
+            background: var(--navy);
+            padding: 10px 24px;
+            display: flex;
+            align-items: baseline;
+            gap: 14px;
+            z-index: 10;
+            box-shadow: 0 1px 4px rgba(0,0,0,0.12);
+        }
+        .app-header h1 {
+            font-size: 18px;
+            font-weight: 700;
+            color: #fff;
+            letter-spacing: -0.01em;
+            white-space: nowrap;
+        }
+        .app-header .subtitle {
+            font-size: 12px;
+            color: rgba(255, 255, 255, 0.45);
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        /* ---- Two-column main ---- */
+        .app-main {
+            flex: 1;
+            min-height: 0;
+            display: grid;
+            grid-template-columns: 436px 1fr;
+            overflow: hidden;
+            transition: grid-template-columns 0.25s ease;
+        }
+
+        /* ---- Left panel: inputs ---- */
+        .input-panel {
+            overflow-y: auto;
+            background: var(--surface);
+            border-right: 1px solid var(--border);
+            padding: 16px 20px 20px;
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+            scroll-behavior: smooth;
+        }
+        .input-panel::-webkit-scrollbar { width: 4px; }
+        .input-panel::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+        .input-panel::-webkit-scrollbar-track { background: transparent; }
+
+        /* ---- Right panel: results + chart ---- */
+        .output-panel {
+            overflow-y: auto;
+            padding: 20px 24px 24px;
+            display: flex;
+            flex-direction: column;
+            gap: 16px;
+        }
+        .output-panel::-webkit-scrollbar { width: 4px; }
+        .output-panel::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+        .output-panel::-webkit-scrollbar-track { background: transparent; }
+
+        /* ---- Mode Tabs ---- */
+        .mode-tabs {
+            display: flex;
+            gap: 0;
+            background: #f1f5f9;
+            border-radius: var(--radius);
+            padding: 3px;
+            border: 1px solid var(--border);
+            flex-shrink: 0;
+        }
+        .mode-tabs button {
+            flex: 1;
+            padding: 10px 14px;
+            border: none;
+            background: transparent;
+            font-family: var(--font);
+            font-size: 13px;
+            font-weight: 500;
+            color: var(--muted);
+            cursor: pointer;
+            border-radius: calc(var(--radius) - 3px);
+            transition: all 0.2s ease;
+            white-space: nowrap;
+            min-height: 40px;
+        }
+        .mode-tabs button:hover { color: var(--fg); }
+        .mode-tabs button.active {
+            background: var(--navy);
+            color: #fff;
+            box-shadow: 0 2px 6px rgba(30, 58, 95, 0.25);
+        }
+
+        /* ---- Parameter Cards ---- */
+        .param-grid {
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+        }
+
+        .param-card {
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            box-shadow: var(--shadow-sm);
+            overflow: hidden;
+            flex-shrink: 0;
+        }
+        .param-card legend {
+            display: block;
+            width: 100%;
+            padding: 10px 16px;
+            font-weight: 600;
+            font-size: 12px;
+            color: var(--navy);
+            background: #f8fafc;
+            border-bottom: 1px solid var(--border);
+            letter-spacing: 0.03em;
+            text-transform: uppercase;
+            user-select: none;
+        }
+        .param-card .card-body {
+            padding: 12px 16px;
+            transition: opacity 0.2s ease;
+        }
+
+        /* ---- Form Fields ---- */
+        .form-group {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            margin-bottom: 10px;
+            min-height: 36px;
+        }
+        .form-group:last-child { margin-bottom: 0; }
+
+        .form-group label:first-child {
+            flex: 0 0 125px;
+            font-size: 13px;
+            font-weight: 500;
+            color: var(--navy-l);
+            line-height: 1.3;
+            user-select: none;
+        }
+
+        .form-group input[type="number"] {
+            width: 96px;
+            padding: 6px 10px;
+            border: 1px solid var(--border);
+            border-radius: var(--radius-sm);
+            font-family: var(--font-mono);
+            font-size: 13px;
+            font-weight: 500;
+            color: var(--fg);
+            background: #f8fafc;
+            transition: border-color 0.15s, box-shadow 0.15s;
+            -moz-appearance: textfield;
+        }
+        .form-group input[type="number"]::-webkit-inner-spin-button,
+        .form-group input[type="number"]::-webkit-outer-spin-button { opacity: 1; height: 24px; }
+        .form-group input[type="number"]:focus {
+            outline: none;
+            border-color: var(--accent);
+            box-shadow: 0 0 0 3px rgba(5, 150, 105, 0.12);
+            background: #fff;
+        }
+
+        .form-group input[type="checkbox"] {
+            width: 17px; height: 17px;
+            accent-color: var(--accent);
+            cursor: pointer;
+            flex-shrink: 0;
+        }
+        .form-group input[type="radio"] {
+            width: 17px; height: 17px;
+            accent-color: var(--accent);
+            cursor: pointer;
+            flex-shrink: 0;
+        }
+
+        .form-group .unit {
+            font-size: 13px;
+            color: var(--muted);
+            white-space: nowrap;
+        }
+
+        /* ---- Hint badges ---- */
+        .hint {
+            display: inline-flex;
+            align-items: center;
+            gap: 3px;
+            font-size: 11px;
+            font-weight: 500;
+            color: var(--muted);
+            white-space: nowrap;
+        }
+        .hint strong {
+            font-weight: 700;
+            color: var(--info);
+            font-size: 10px;
+            text-transform: uppercase;
+            letter-spacing: 0.04em;
+        }
+        .param-with-hint {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            flex-wrap: wrap;
+        }
+        .param-with-hint input { flex-shrink: 0; }
+        .param-with-hint .hint { margin-top: 0; }
+
+        /* ---- Radio & Checkbox rows ---- */
+        .radio-row {
+            display: flex;
+            align-items: center;
+            gap: 4px;
+        }
+        .radio-row label {
+            display: inline-flex;
+            align-items: center;
+            gap: 3px;
+            font-size: 13px;
+            font-weight: 400;
+            color: var(--fg);
+            cursor: pointer;
+            padding: 3px 10px 3px 6px;
+            border-radius: var(--radius-sm);
+            border: 1px solid transparent;
+            transition: background 0.15s;
+        }
+        .radio-row label:hover { background: #f1f5f9; }
+
+        /* ---- Mortgage Card ---- */
+        .mortgage-card legend {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            cursor: pointer;
+            user-select: none;
+        }
+        .mortgage-card legend input[type="checkbox"] {
+            width: 17px; height: 17px;
+            accent-color: var(--accent);
+            margin: 0;
+        }
+
+        #mortgage-fields {
+            max-height: 0;
+            overflow: hidden;
+            opacity: 0;
+            transition: max-height 0.45s cubic-bezier(0.4, 0, 0.2, 1),
+                        opacity 0.3s ease,
+                        margin 0.45s cubic-bezier(0.4, 0, 0.2, 1);
+            margin: 0;
+        }
+        #mortgage-fields.expanded {
+            max-height: 360px;
+            opacity: 1;
+            margin: 12px 16px 16px;
+        }
+
+        /* ---- Calculate Button ---- */
+        .btn-calculate {
+            display: block;
+            width: 100%;
+            padding: 13px 24px;
+            border: none;
+            border-radius: var(--radius);
+            background: var(--accent);
+            color: #fff;
+            font-family: var(--font);
+            font-size: 15px;
+            font-weight: 600;
+            cursor: pointer;
+            letter-spacing: 0.02em;
+            transition: background 0.15s, transform 0.1s, box-shadow 0.15s;
+            box-shadow: 0 3px 12px rgba(5, 150, 105, 0.28);
+            flex-shrink: 0;
+        }
+        .btn-calculate:hover {
+            background: var(--accent-h);
+            box-shadow: 0 4px 16px rgba(5, 150, 105, 0.36);
+        }
+        .btn-calculate:active {
+            transform: scale(0.985);
+            box-shadow: 0 2px 6px rgba(5, 150, 105, 0.25);
+        }
+
+        /* ---- Mode-params containers ---- */
+        .mode-params {
+            display: flex;
+            flex-direction: column;
+        }
+
+        /* ---- Results (right panel) ---- */
+        #result {
+            flex-shrink: 0;
+        }
+        #result:not(:empty) {
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            padding: 18px 22px;
+            box-shadow: var(--shadow);
+        }
+        #result h3 {
+            font-size: 16px;
+            font-weight: 700;
+            color: var(--navy);
+            margin-bottom: 12px;
+            letter-spacing: -0.01em;
+        }
+        #result p {
+            font-size: 14px;
+            margin-bottom: 6px;
+            color: var(--navy-l);
+            line-height: 1.6;
+        }
+        #result p:last-child { margin-bottom: 0; }
+        #result strong {
+            color: var(--accent);
+            font-weight: 700;
+            font-size: 15px;
+        }
+        #result hr {
+            border: none;
+            border-top: 1px solid var(--border);
+            margin: 12px 0;
+        }
+        #result .error-text {
+            color: var(--danger);
+            font-weight: 600;
+        }
+
+        /* ---- Chart (right panel, fills remaining height) ---- */
+        #chart-container {
+            flex: 1;
+            min-height: 400px;
+            display: flex;
+            flex-direction: column;
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            padding: 16px;
+            box-shadow: var(--shadow);
+        }
+        #chart-container canvas {
+            width: 100% !important;
+            flex: 1;
+            min-height: 0;
+        }
+
+        /* ---- Footer ---- */
+        .app-footer {
+            flex-shrink: 0;
+            text-align: center;
+            padding: 6px 20px;
+            color: var(--muted);
+            font-size: 12px;
+            background: var(--surface);
+            border-top: 1px solid var(--border);
+        }
+
+        /* ==================================================================
+           TABLET  641–1023px
+           Narrower left panel, smaller type, keeps two-column + 100vh
+           ================================================================== */
+        @media (max-width: 1023px) {
+            .app-main {
+                grid-template-columns: 310px 1fr;
+            }
+
+            .app-header {
+                padding: 8px 16px;
+                gap: 10px;
+            }
+            .app-header h1 { font-size: 16px; }
+            .app-header .subtitle { font-size: 11px; }
+
+            .input-panel {
+                padding: 12px 14px 16px;
+                gap: 10px;
+            }
+
+            .output-panel {
+                padding: 14px 16px 18px;
+                gap: 12px;
+            }
+
+            .mode-tabs button {
+                font-size: 12px;
+                padding: 8px 10px;
+                min-height: 36px;
+            }
+
+            .param-card legend {
+                font-size: 11px;
+                padding: 8px 12px;
+            }
+            .param-card .card-body {
+                padding: 10px 12px;
+            }
+
+            .form-group label:first-child {
+                flex: 0 0 105px;
+                font-size: 12px;
+            }
+            .form-group input[type="number"] {
+                width: 80px;
+                font-size: 12px;
+                padding: 5px 8px;
+            }
+            .form-group { margin-bottom: 8px; min-height: 32px; }
+
+            .btn-calculate {
+                font-size: 14px;
+                padding: 11px 20px;
+            }
+
+            #chart-container { min-height: 320px; }
+            #result:not(:empty) { padding: 14px 16px; }
+            #result h3 { font-size: 15px; }
+            #result p { font-size: 13px; }
+            #result strong { font-size: 14px; }
+
+            .hint { font-size: 10px; }
+            .hint strong { font-size: 9px; }
+        }
+
+        /* ==================================================================
+           MOBILE  ≤ 640px
+           Single column, scrollable, collapsible cards, sticky CTA,
+           full-width inputs, larger touch targets (≥ 44px)
+           ================================================================== */
+        @media (max-width: 640px) {
+            body {
+                height: auto;
+                overflow: visible;
+                min-height: 100vh;
+                min-height: 100dvh;
+            }
+
+            .app-header {
+                padding: 10px 14px;
+                gap: 6px;
+                flex-wrap: wrap;
+                position: sticky;
+                top: 0;
+                z-index: 20;
+            }
+            .app-header h1 { font-size: 16px; }
+            .app-header .subtitle { font-size: 11px; }
+
+            .app-main {
+                grid-template-columns: 1fr;
+                grid-template-rows: auto;
+                overflow: visible;
+                flex: none;
+            }
+
+            /* ---- Left panel → top section ---- */
+            .input-panel {
+                overflow: visible;
+                border-right: none;
+                border-bottom: 2px solid var(--border);
+                padding: 12px 12px 10px;
+                gap: 8px;
+            }
+
+            /* ---- Right panel → below ---- */
+            .output-panel {
+                overflow: visible;
+                padding: 12px 12px 20px;
+                min-height: auto;
+                gap: 12px;
+            }
+
+            /* ---- Mode tabs: full-width, large touch targets ---- */
+            .mode-tabs {
+                position: sticky;
+                top: 50px;
+                z-index: 15;
+                background: var(--surface);
+                border: 1px solid var(--border);
+                border-radius: var(--radius);
+                box-shadow: var(--shadow-sm);
+            }
+            .mode-tabs button {
+                font-size: 13px;
+                padding: 12px 10px;
+                min-height: 44px;
+                font-weight: 600;
+            }
+
+            /* ---- Cards: collapsible (handled by JS) ---- */
+            .param-grid { gap: 8px; }
+
+            .param-card {
+                border-radius: var(--radius);
+                box-shadow: var(--shadow-sm);
+            }
+            .param-card legend {
+                font-size: 12px;
+                font-weight: 700;
+                padding: 11px 14px;
+                cursor: pointer;
+                display: flex;
+                align-items: center;
+                justify-content: space-between;
+                transition: background 0.15s;
+            }
+            .param-card legend:active { background: #eef2f7; }
+            .param-card legend::after {
+                content: '';
+                width: 20px;
+                height: 20px;
+                flex-shrink: 0;
+                background: currentColor;
+                mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E") center/contain no-repeat;
+                -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E") center/contain no-repeat;
+                opacity: 0.4;
+                transition: transform 0.25s ease;
+            }
+            .param-card legend.collapsed::after {
+                transform: rotate(-90deg);
+            }
+            .param-card .card-body {
+                padding: 12px 14px;
+                overflow: hidden;
+                max-height: 600px;
+                opacity: 1;
+                transition: max-height 0.35s ease, opacity 0.25s ease, padding 0.35s ease;
+            }
+            .param-card .card-body.collapsed {
+                max-height: 0;
+                opacity: 0;
+                padding-top: 0;
+                padding-bottom: 0;
+            }
+
+            /* Mortgage card legend keeps its checkbox behavior */
+            .mortgage-card legend {
+                cursor: pointer;
+                justify-content: flex-start;
+            }
+            .mortgage-card legend::after { display: none; }
+            #mortgage-fields.expanded {
+                max-height: 620px;
+            }
+
+            /* ---- Form: stacked labels, full-width inputs, 44px touch ---- */
+            .form-group {
+                flex-direction: column;
+                align-items: flex-start;
+                gap: 4px;
+                margin-bottom: 12px;
+                min-height: auto;
+            }
+            .form-group label:first-child {
+                flex: none;
+                width: 100%;
+                font-size: 13px;
+                font-weight: 600;
+            }
+            .form-group input[type="number"] {
+                width: 100%;
+                max-width: 100%;
+                padding: 10px 12px;
+                font-size: 15px;
+                min-height: 44px;
+                border-radius: var(--radius-sm);
+            }
+            .form-group input[type="checkbox"],
+            .form-group input[type="radio"] {
+                width: 22px;
+                height: 22px;
+            }
+
+            .param-with-hint {
+                width: 100%;
+                flex-wrap: wrap;
+            }
+            .param-with-hint input { flex: 1; min-width: 0; }
+
+            .radio-row {
+                flex-wrap: wrap;
+                gap: 2px;
+            }
+            .radio-row label {
+                padding: 8px 14px;
+                font-size: 14px;
+                min-height: 44px;
+                display: inline-flex;
+                align-items: center;
+                border: 1px solid var(--border);
+                border-radius: var(--radius-sm);
+            }
+
+            /* ---- Sticky calculate button ---- */
+            .btn-calculate {
+                position: sticky;
+                bottom: 10px;
+                z-index: 15;
+                padding: 14px 20px;
+                font-size: 16px;
+                min-height: 48px;
+                box-shadow: 0 4px 20px rgba(5, 150, 105, 0.35);
+                margin-top: 4px;
+            }
+
+            /* ---- Results: compact card ---- */
+            #result:not(:empty) {
+                padding: 14px 16px;
+                border-radius: var(--radius);
+            }
+            #result h3 { font-size: 15px; margin-bottom: 10px; }
+            #result p { font-size: 14px; margin-bottom: 5px; }
+            #result strong { font-size: 15px; }
+
+            /* ---- Chart: adaptive height, scrollable ---- */
+            #chart-container {
+                flex: none;
+                min-height: 320px;
+                height: clamp(320px, 55vh, 520px);
+                padding: 10px;
+            }
+
+            /* ---- Footer: compact ---- */
+            .app-footer {
+                padding: 8px 14px;
+                font-size: 11px;
+            }
+
+            /* ---- Hints: wrap on mobile ---- */
+            .hint {
+                font-size: 10px;
+                white-space: normal;
+            }
+        }
+
+        /* ==================================================================
+           SMALL PHONES  ≤ 400px
+           Extra-compact for narrow viewports (e.g. iPhone SE)
+           ================================================================== */
+        @media (max-width: 400px) {
+            .app-header h1 { font-size: 15px; }
+            .mode-tabs button { font-size: 12px; padding: 10px 6px; }
+            .param-card legend { font-size: 11px; padding: 10px 12px; }
+            .param-card .card-body { padding: 10px 12px; }
+            .btn-calculate { font-size: 15px; padding: 12px 16px; min-height: 44px; }
+            #chart-container { height: clamp(280px, 50vh, 400px); min-height: 280px; }
+            .form-group input[type="number"] { padding: 8px 10px; font-size: 14px; min-height: 40px; }
+        }
+    </style>
+</head>
+<body>
+
+    <!-- Compact header -->
+    <header class="app-header">
+        <h1>FIRE 财务自由计算器</h1>
+        <span class="subtitle">Financial Independence, Retire Early — 科学规划你的财务自由之路</span>
+    </header>
+
+    <main class="app-main">
+
+        <!-- ===== Left panel: all inputs ===== -->
+        <div class="input-panel">
+
+            <!-- Mode tabs -->
+            <div class="mode-tabs">
+                <button class="active" data-mode="saving">计算所需储蓄</button>
+                <button data-mode="year">计算达成年份</button>
+            </div>
+
+            <!-- 基本参数 + 收益与通胀 -->
+            <div class="param-grid">
+                <fieldset class="param-card">
+                    <legend>基本参数</legend>
+                    <div class="card-body">
+                        <div class="form-group">
+                            <label for="startYear">计划起始年份</label>
+                            <input type="number" id="startYear" value="2024">
+                        </div>
+                        <div class="form-group">
+                            <label for="startAsset">起始资金</label>
+                            <span style="display:inline-flex;align-items:center;gap:6px;">
+                                <input type="number" id="startAsset" value="100000">
+                                <span class="unit">元</span>
+                            </span>
+                        </div>
+                        <div class="form-group">
+                            <label for="annualExpense">每年消费</label>
+                            <span style="display:inline-flex;align-items:center;gap:6px;flex-wrap:wrap;">
+                                <input type="number" id="annualExpense" value="200000">
+                                <span class="unit">元</span>
+                                <span class="hint" style="font-size:11px">（当前购买力）</span>
+                            </span>
+                        </div>
+                        <div class="form-group">
+                            <label for="withdrawRate">提取率</label>
+                            <div class="param-with-hint">
+                                <input type="number" id="withdrawRate" value="3.3" step="0.1" min="1" max="10">
+                                <span class="unit">%</span>
+                                <span id="withdrawRateHint" class="hint"></span>
+                            </div>
+                        </div>
+                    </div>
+                </fieldset>
+
+                <fieldset class="param-card">
+                    <legend>收益与通胀</legend>
+                    <div class="card-body">
+                        <div class="form-group">
+                            <label for="rate">年化利率</label>
+                            <div class="param-with-hint">
+                                <input type="number" id="rate" value="7" step="0.5" min="0" max="30">
+                                <span class="unit">%</span>
+                                <span id="rateHint" class="hint"></span>
+                            </div>
+                        </div>
+                        <div class="form-group">
+                            <label for="inflationRate">预期通胀率</label>
+                            <div class="param-with-hint">
+                                <input type="number" id="inflationRate" value="2" step="0.5" min="0" max="30">
+                                <span class="unit">%</span>
+                                <span id="inflationRateHint" class="hint"></span>
+                            </div>
+                        </div>
+                        <div class="form-group">
+                            <label>储蓄随通胀增长</label>
+                            <input type="checkbox" id="savingGrowWithInflation">
+                            <span class="hint">（勾选后工资与通胀同步增长）</span>
+                        </div>
+                        <div class="form-group">
+                            <label>计算粒度</label>
+                            <div class="radio-row">
+                                <label><input type="radio" name="calcMode" value="yearly"> 按年</label>
+                                <label><input type="radio" name="calcMode" value="monthly" checked> 按月</label>
+                            </div>
+                        </div>
+                    </div>
+                </fieldset>
+            </div>
+
+            <!-- Mode-specific params -->
+            <div id="param-saving" class="mode-params param-grid" style="display: grid;">
+                <fieldset class="param-card">
+                    <legend>储蓄目标</legend>
+                    <div class="card-body">
+                        <div class="form-group">
+                            <label for="targetYear">FIRE 目标年份</label>
+                            <input type="number" id="targetYear" value="2034">
+                        </div>
+                    </div>
+                </fieldset>
+            </div>
+
+            <div id="param-year" class="mode-params param-grid" style="display:none;">
+                <fieldset class="param-card">
+                    <legend>储蓄金额</legend>
+                    <div class="card-body">
+                        <div class="form-group">
+                            <label for="annualSaving">每年储蓄金额</label>
+                            <span style="display:inline-flex;align-items:center;gap:6px;">
+                                <input type="number" id="annualSaving" value="150000">
+                                <span class="unit">元</span>
+                            </span>
+                        </div>
+                    </div>
+                </fieldset>
+            </div>
+
+            <!-- 购房计划 -->
+            <fieldset class="param-card mortgage-card">
+                <legend>
+                    <input type="checkbox" id="enableMortgage">
+                    启用购房计划
+                </legend>
+                <div id="mortgage-fields">
+                    <div class="form-group">
+                        <label for="purchaseYear">购房年份</label>
+                        <input type="number" id="purchaseYear" value="2026">
+                    </div>
+                    <div class="form-group">
+                        <label for="housePrice">房屋总价</label>
+                        <span style="display:inline-flex;align-items:center;gap:6px;">
+                            <input type="number" id="housePrice" value="3000000">
+                            <span class="unit">元</span>
+                        </span>
+                    </div>
+                    <div class="form-group">
+                        <label for="downPaymentRate">首付比例</label>
+                        <span style="display:inline-flex;align-items:center;gap:6px;">
+                            <input type="number" id="downPaymentRate" value="30" step="5" min="0" max="100">
+                            <span class="unit">%</span>
+                        </span>
+                    </div>
+                    <div class="form-group">
+                        <label for="mortgageRate">房贷利率</label>
+                        <span style="display:inline-flex;align-items:center;gap:6px;">
+                            <input type="number" id="mortgageRate" value="4.0" step="0.1" min="0" max="20">
+                            <span class="unit">%</span>
+                        </span>
+                    </div>
+                    <div class="form-group">
+                        <label for="mortgageYears">还款期限</label>
+                        <span style="display:inline-flex;align-items:center;gap:6px;">
+                            <input type="number" id="mortgageYears" value="30" min="1" max="50">
+                            <span class="unit">年</span>
+                        </span>
+                    </div>
+                </div>
+            </fieldset>
+
+            <!-- Calculate button -->
+            <button id="calculateBtn" class="btn-calculate">开始计算</button>
+        </div>
+
+        <!-- ===== Right panel: results + chart ===== -->
+        <div class="output-panel">
+            <div id="result"></div>
+            <div id="chart-container">
+                <canvas id="trajectoryChart"></canvas>
+            </div>
+        </div>
+
+    </main>
+
+    <footer class="app-footer">
+        数据仅供参考，不构成投资建议 · 计算结果基于您输入的参数模拟
+    </footer>
+
+    <script src="fire-calculator.js"></script>
+    <script>
+        let currentMode = 'saving';
+        let chart = null;
+
+        // 模式切换
+        document.querySelectorAll('.mode-tabs button').forEach(btn => {
+            btn.addEventListener('click', () => {
+                document.querySelector('.mode-tabs .active').classList.remove('active');
+                btn.classList.add('active');
+                currentMode = btn.dataset.mode;
+                document.querySelectorAll('.mode-params').forEach(el => el.style.display = 'none');
+                const target = document.getElementById('param-' + currentMode);
+                if (currentMode === 'saving') {
+                    target.style.display = 'grid';
+                } else {
+                    target.style.display = 'block';
+                }
+                document.getElementById('calculateBtn').click();
+            });
+        });
+
+        // 购房开关 — 使用 class 切换以实现折叠动画
+        document.getElementById('enableMortgage').addEventListener('change', (e) => {
+            const fields = document.getElementById('mortgage-fields');
+            if (e.target.checked) {
+                fields.classList.add('expanded');
+            } else {
+                fields.classList.remove('expanded');
+            }
+        });
+
+        // 参数提示更新
+        function updateParamHints() {
+            const withdrawRate = parseFloat(document.getElementById('withdrawRate').value);
+            const rate = parseFloat(document.getElementById('rate').value) / 100;
+            const inflationRate = parseFloat(document.getElementById('inflationRate').value) / 100;
+
+            const wrSuggestion = FireCalculator.getParameterSuggestion('withdrawRate', withdrawRate);
+            document.getElementById('withdrawRateHint').innerHTML = wrSuggestion
+                ? '<strong>' + wrSuggestion.label + '</strong> ' + wrSuggestion.desc
+                : '';
+
+            const rateSuggestion = FireCalculator.getParameterSuggestion('rate', rate);
+            document.getElementById('rateHint').innerHTML = rateSuggestion
+                ? '<strong>' + rateSuggestion.label + '</strong> ' + rateSuggestion.desc
+                : '';
+
+            const infSuggestion = FireCalculator.getParameterSuggestion('inflationRate', inflationRate);
+            document.getElementById('inflationRateHint').innerHTML = infSuggestion
+                ? '<strong>' + infSuggestion.label + '</strong> ' + infSuggestion.desc
+                : '';
+        }
+
+        // 监听参数变化
+        ['withdrawRate', 'rate', 'inflationRate'].forEach(id => {
+            document.getElementById(id).addEventListener('input', updateParamHints);
+        });
+        updateParamHints();
+
+        // 计算按钮
+        document.getElementById('calculateBtn').addEventListener('click', () => {
+            const monthlyCalc = document.querySelector('input[name="calcMode"]:checked').value === 'monthly';
+
+            const params = {
+                startYear: parseInt(document.getElementById('startYear').value),
+                startAsset: parseFloat(document.getElementById('startAsset').value),
+                annualExpense: parseFloat(document.getElementById('annualExpense').value),
+                withdrawRate: parseFloat(document.getElementById('withdrawRate').value) / 100,
+                rate: parseFloat(document.getElementById('rate').value) / 100,
+                inflationRate: parseFloat(document.getElementById('inflationRate').value) / 100,
+                savingGrowWithInflation: document.getElementById('savingGrowWithInflation').checked,
+                monthlyCalc,
+                mortgage: getMortgageParams()
+            };
+
+            if (currentMode === 'saving') {
+                params.targetYear = parseInt(document.getElementById('targetYear').value);
+            } else if (currentMode === 'year') {
+                params.annualSaving = parseFloat(document.getElementById('annualSaving').value);
+            }
+
+            const result = FireCalculator.calculate(currentMode, params);
+            displayResult(result, params);
+        });
+
+        function getMortgageParams() {
+            if (!document.getElementById('enableMortgage').checked) return null;
+            return {
+                purchaseYear: parseInt(document.getElementById('purchaseYear').value),
+                housePrice: parseFloat(document.getElementById('housePrice').value),
+                downPaymentRate: parseFloat(document.getElementById('downPaymentRate').value) / 100,
+                rate: parseFloat(document.getElementById('mortgageRate').value) / 100,
+                years: parseInt(document.getElementById('mortgageYears').value)
+            };
+        }
+
+        function displayResult(result, params) {
+            const resultDiv = document.getElementById('result');
+            if (result.error) {
+                resultDiv.innerHTML = '<p class="error-text">' + result.error + '</p>';
+                if (chart) { chart.destroy(); chart = null; }
+                document.getElementById('chart-container').innerHTML = '<canvas id="trajectoryChart"></canvas>';
+                return;
+            }
+
+            let html = '<h3>计算结果</h3>';
+
+            if (params.inflationRate > 0) {
+                html += '<p><span style="color:#64748b">FIRE 目标资产（当前购买力）：</span><strong>' + result.baseTargetAsset.toLocaleString() + '</strong> 元</p>';
+                html += '<p><span style="color:#64748b">FIRE 目标资产（名义值）：</span><strong>' + result.targetAsset.toLocaleString() + '</strong> 元</p>';
+            } else {
+                html += '<p><span style="color:#64748b">FIRE 目标资产：</span><strong>' + result.targetAsset.toLocaleString() + '</strong> 元</p>';
+            }
+
+            if (result.mode === 'saving') {
+                if (result.calculationMode === 'monthly') {
+                    html += '<p><span style="color:#64748b">每月需要储蓄：</span><strong>' + result.requiredMonthlySaving.toLocaleString() + '</strong> 元</p>';
+                    html += '<p style="font-size:13px;color:#94a3b8">（每年 ' + result.requiredAnnualSaving.toLocaleString() + ' 元）</p>';
+                } else {
+                    html += '<p><span style="color:#64748b">每年需要储蓄：</span><strong>' + result.requiredSaving.toLocaleString() + '</strong> 元</p>';
+                    if (result.savingGrowWithInflation) {
+                        html += '<p class="hint">（此为首年金额，后续每年随通胀增长）</p>';
+                    }
+                }
+            } else if (result.mode === 'year') {
+                if (result.calculationMode === 'monthly') {
+                    html += '<p><span style="color:#64748b">预计达成：</span><strong>' + result.achievementYear + '年' + result.achievementMonth + '月</strong></p>';
+                    html += '<p style="font-size:13px;color:#94a3b8">（需要 ' + result.yearsNeeded + ' 年）</p>';
+                } else {
+                    html += '<p><span style="color:#64748b">预计达成年份：</span><strong>' + result.achievementYear + ' 年</strong></p>';
+                    html += '<p style="font-size:13px;color:#94a3b8">（需要 ' + result.yearsNeeded + ' 年）</p>';
+                }
+            }
+
+            if (result.mortgageInfo && result.mortgageInfo.hasMortgage) {
+                html += '<hr>';
+                html += '<p><span style="color:#64748b">购房总价：</span>' + result.mortgageInfo.housePrice.toLocaleString() + ' 元</p>';
+                html += '<p><span style="color:#64748b">首付：</span>' + result.mortgageInfo.downPayment.toLocaleString() + ' 元</p>';
+                html += '<p><span style="color:#64748b">贷款本金：</span>' + result.mortgageInfo.loanPrincipal.toLocaleString() + ' 元</p>';
+                html += '<p><span style="color:#64748b">每年房贷：</span>' + result.mortgageInfo.annualPayment.toLocaleString() + ' 元</p>';
+                html += '<p><span style="color:#64748b">总利息：</span>' + result.mortgageInfo.totalInterest.toLocaleString() + ' 元</p>';
+            }
+
+            resultDiv.innerHTML = html;
+
+            // 准备轨迹数据
+            const yearsNeeded = result.yearsNeeded ?? 0;
+            let years = result.years !== undefined ? result.years
+                : (params.monthlyCalc ? Math.ceil(yearsNeeded) : yearsNeeded);
+            if (params.mortgage) {
+                const mortgageEndYear = params.mortgage.purchaseYear + params.mortgage.years;
+                const simulationEndYear = params.startYear + years;
+                if (mortgageEndYear > simulationEndYear) {
+                    years = mortgageEndYear - params.startYear;
+                }
+            }
+            const trajectoryParams = { ...params, years };
+            if (result.mode === 'saving') {
+                if (result.requiredSaving !== undefined) {
+                    trajectoryParams.annualSaving = result.requiredSaving;
+                } else if (result.requiredAnnualSaving !== undefined) {
+                    trajectoryParams.annualSaving = result.requiredAnnualSaving;
+                }
+            }
+
+            const trajectory = result.trajectory ||
+                FireCalculator.getTrajectory(trajectoryParams);
+            renderChart(trajectory, result.targetAsset, result.baseTargetAsset, params.mortgage, params.inflationRate, params.startYear);
+        }
+
+        function renderChart(trajectory, targetAsset, baseTargetAsset, mortgage, inflationRate, startYear) {
+            if (!trajectory || trajectory.length === 0) {
+                console.warn('轨迹数据为空，无法渲染图表');
+                return;
+            }
+
+            if (chart) {
+                chart.destroy();
+                chart = null;
+            }
+            const container = document.getElementById('chart-container');
+            container.innerHTML = '';
+            const canvas = document.createElement('canvas');
+            canvas.id = 'trajectoryChart';
+            container.appendChild(canvas);
+
+            const hasInflation = inflationRate > 0;
+
+            const fireTargetData = trajectory.map(p => {
+                if (hasInflation) {
+                    const yearsElapsed = p.year - startYear + (p.month ? (p.month - 1) / 12 : 0);
+                    return FireCalculator.adjustForInflation(baseTargetAsset, inflationRate, yearsElapsed);
+                }
+                return targetAsset;
+            });
+
+            const datasets = [
+                {
+                    label: '资产总额（名义值）',
+                    data: trajectory.map(p => p.asset),
+                    borderColor: '#2563eb',
+                    backgroundColor: 'rgba(37, 99, 235, 0.08)',
+                    borderWidth: 2.5,
+                    pointRadius: 0,
+                    pointHoverRadius: 5,
+                    fill: true,
+                    tension: 0.1
+                },
+                {
+                    label: hasInflation ? 'FIRE 目标（通胀调整后）' : 'FIRE 目标',
+                    data: fireTargetData,
+                    borderColor: '#dc2626',
+                    borderDash: [6, 4],
+                    borderWidth: 2,
+                    pointRadius: 0,
+                    fill: false,
+                    tension: 0.1
+                }
+            ];
+
+            if (hasInflation && trajectory.length > 0 && trajectory[0].realAsset !== undefined) {
+                datasets.push({
+                    label: '资产总额（实际购买力）',
+                    data: trajectory.map(p => p.realAsset),
+                    borderColor: '#10b981',
+                    borderWidth: 2,
+                    pointRadius: 0,
+                    pointHoverRadius: 5,
+                    fill: false,
+                    tension: 0.1
+                });
+            }
+
+            if (mortgage && trajectory.length > 0) {
+                let mortgageData;
+                if (trajectory[0].cumulativeMortgage !== undefined) {
+                    mortgageData = trajectory.map(p => p.cumulativeMortgage);
+                } else if (trajectory[0].mortgagePayment !== undefined) {
+                    let cumulative = 0;
+                    mortgageData = trajectory.map(p => {
+                        cumulative += (p.mortgagePayment || 0) + (p.downPayment || 0);
+                        return cumulative;
+                    });
+                }
+
+                if (mortgageData) {
+                    datasets.push({
+                        label: '累计购房支出（含首付）',
+                        data: mortgageData,
+                        borderColor: '#f59e0b',
+                        borderDash: [4, 4],
+                        borderWidth: 1.8,
+                        pointRadius: 0,
+                        fill: false,
+                        tension: 0.1
+                    });
+                }
+            }
+
+            chart = new Chart(canvas.getContext('2d'), {
+                type: 'line',
+                data: {
+                    labels: trajectory.map(p => p.month ? p.year + '/' + p.month : p.year),
+                    datasets
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    interaction: {
+                        mode: 'index',
+                        intersect: false
+                    },
+                    scales: {
+                        x: {
+                            grid: { color: 'rgba(226, 232, 240, 0.6)' },
+                            ticks: { font: { size: 12 }, color: '#64748b' }
+                        },
+                        y: {
+                            title: { display: true, text: '金额 (元)', color: '#64748b', font: { size: 13, weight: '600' } },
+                            grid: { color: 'rgba(226, 232, 240, 0.6)' },
+                            ticks: {
+                                font: { size: 12, family: "'SF Mono','JetBrains Mono',monospace" },
+                                color: '#64748b',
+                                callback: function(value) {
+                                    if (value >= 1e8) return (value / 1e8).toFixed(1) + ' 亿';
+                                    if (value >= 1e4) return (value / 1e4).toFixed(0) + ' 万';
+                                    return value;
+                                }
+                            }
+                        }
+                    },
+                    plugins: {
+                        legend: {
+                            labels: {
+                                usePointStyle: true,
+                                pointStyleWidth: 8,
+                                padding: 20,
+                                font: { size: 13 },
+                                color: '#334155'
+                            }
+                        },
+                        tooltip: {
+                            backgroundColor: 'rgba(15, 23, 42, 0.92)',
+                            titleFont: { size: 13 },
+                            bodyFont: { size: 12 },
+                            padding: 12,
+                            cornerRadius: 8,
+                            callbacks: {
+                                label: function(context) {
+                                    return context.dataset.label + ': ' +
+                                        context.parsed.y.toLocaleString() + ' 元';
+                                }
+                            }
+                        }
+                    }
+                }
+            });
+        }
+
+        /* ================================================================
+           Mobile card accordion — independent UX enhancement.
+           On narrow screens (≤ 640px), tap a card's legend to
+           collapse / expand its body. Does not affect the mortgage
+           card (which has its own checkbox toggle).
+           ================================================================ */
+        (function() {
+            if (window.innerWidth > 640) return;
+
+            const cards = document.querySelectorAll('.param-card:not(.mortgage-card) legend');
+            cards.forEach(function(legend) {
+                legend.addEventListener('click', function(e) {
+                    if (e.target.tagName === 'INPUT' || e.target.tagName === 'LABEL') return;
+                    const body = this.nextElementSibling;
+                    if (!body) return;
+                    const collapsed = body.classList.toggle('collapsed');
+                    this.classList.toggle('collapsed', collapsed);
+                });
+            });
+        })();
+    </script>
+</body>
+</html>

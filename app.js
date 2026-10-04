@@ -1,6 +1,12 @@
 (() => {
     'use strict';
-    const F = FireCalculator, P = FirePlan;
+    const F = window.FireCalculator, P = window.FirePlan;
+    if (F?.API_VERSION !== 1 || !P) {
+        document.getElementById('app').innerHTML = '<section class="panel result-panel" role="alert"><h1>页面需要更新</h1><p>计算脚本未完整加载或版本不一致。刷新会清空当前填写内容，请先记录已填参数。</p><button type="button" class="button" id="reload-page">重新加载页面</button></section>';
+        document.getElementById('guideToggle').hidden = true;
+        document.getElementById('reload-page').addEventListener('click', () => window.location.reload());
+        return;
+    }
     const state = P.defaults();
     let view = 'main', current = 'intro', fieldErrors = {}, result = null, resultParams = null, dirty = false, returnToReview = false;
     const app = document.getElementById('app');

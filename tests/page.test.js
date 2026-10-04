@@ -228,3 +228,45 @@ for (const mode of ['year', 'saving']) test(`不支持 Array.at 时核对页返�
     assert.match(p.q('#guideToggle').textContent, /引导填写/);
     assert.deepEqual(errors, []);
 });
+
+for (const loan of ['commercial', 'provident', 'mixed', 'cash']) test(`反推月储蓄并购房，核对计算及页面切换：${loan}`, t => {
+    const p = page(t), errors = [];
+    p.w.addEventListener('error', e => errors.push(e.message));
+    p.choose('mode', 'saving'); p.fill('expense', 6000);
+    p.fill('targetYear', loan === 'commercial' ? 2047 : Number(p.q('#startYear').value) + 20);
+    p.fill('house', true); p.fill('housePrice', loan === 'commercial' ? 5000000 : 1000000);
+    if (loan === 'cash') p.fill('fullCash', true);
+    if (loan === 'mixed' || loan === 'provident') {
+        p.fill('provident', true);
+        p.fill('providentAmount', loan === 'mixed' ? 400000 : 700000);
+    }
+    p.click('#guideToggle'); p.click('[data-action="start"]');
+    for (let i = 0; i < (loan === 'cash' ? 10 : 11); i++) p.click('button[type="submit"]');
+    assert.equal(p.q('h1').textContent, '确认你的计划');
+    p.click('button[type="submit"]');
+    assert.match(p.q('.result-primary').textContent, /元／月/);
+    assert.ok(p.q('.chart'));
+    p.click('#guideToggle'); p.click('#guideToggle');
+    assert.ok(p.q('#plan-form'));
+    assert.ok(p.q('.result-primary'));
+    assert.deepEqual(errors, []);
+});
+
+test('资源引用携带当前内容指纹，避免读取旧缓存', () => {
+    const crypto = require('node:crypto');
+    const html = fs.readFileSync(require.resolve('../index.html'), 'utf8');
+    for (const file of ['app.js', 'fire-plan.js', 'fire-calculator.js', 'styles.css']) {
+        const hash = crypto.createHash('sha256').update(fs.readFileSync(require.resolve('../' + file))).digest('hex').slice(0, 12);
+        assert.ok(html.includes(`${file}?v=${hash}`), `${file} 修改后须运行 npm run assets`);
+    }
+});
+
+test('旧计算引擎混入时明确提示更新，不继续计算', t => {
+    const p = page(t);
+    delete p.w.FireCalculator.API_VERSION;
+    p.w.eval(fs.readFileSync(require.resolve('../app.js'), 'utf8'));
+    assert.match(p.q('[role="alert"]').textContent, /页面需要更新/);
+    assert.ok(p.q('#reload-page'));
+    assert.equal(p.q('#guideToggle').hidden, true);
+    assert.equal(p.q('form'), null);
+});

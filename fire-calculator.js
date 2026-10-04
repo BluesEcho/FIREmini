@@ -9,6 +9,7 @@
  */
 
 const FireCalculator = {
+    API_VERSION: 1,
 
     // 默认配置
     DEFAULTS: {

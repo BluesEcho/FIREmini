@@ -3,7 +3,7 @@
  *
  * 计算公式：
  * - FIRE目标资产 = 每年消费 / 消费占比
- * - 资产增长：asset(t) = asset(t-1) × (1 + rate) + saving - mortgagePayment
+ * - 资产增长：asset(t) = asset(t-1) × (1 + rate) + saving - downPayment - mortgagePayment
  * - 通胀调整：实际目标 = 目标资产 × (1 + inflationRate)^n
  * - 储蓄增长：可选随通胀增长
  */
@@ -13,38 +13,25 @@ const FireCalculator = {
     // 默认配置
     DEFAULTS: {
         WITHDRAW_RATE: 0.033,
-        MORTGAGE_RATE: 0.04,
+        MORTGAGE_RATE: 0.035,
         MORTGAGE_YEARS: 30,
         DOWN_PAYMENT_RATE: 0.3,
         PURCHASE_MONTH: 1,
-        MAX_SIMULATE_YEARS: 100,
-        MAX_BINARY_ITERATIONS: 100,
-        BINARY_TOLERANCE_YEARLY: 100,
-        BINARY_TOLERANCE_MONTHLY: 10
+        MAX_SIMULATE_YEARS: 100
     },
 
     // 参数参考范围
     REFERENCE_RANGES: {
         withdrawRate: [
-            { min: 2.5, max: 3.0, label: '极保守', desc: '几乎不可能亏完，适合超长期FIRE' },
-            { min: 3.0, max: 3.5, label: '保守', desc: '学术界推荐范围，4%法则的保守版本' },
-            { min: 3.5, max: 4.0, label: '适中', desc: '经典4%法则，历史回测成功率约95%' },
-            { min: 4.0, max: 5.0, label: '激进', desc: '有一定风险，适合有灵活调整能力的人' },
-            { min: 5.0, max: 6.0, label: '高风险', desc: '需要较强的市场适应能力或副业收入' }
+            { min: 1, max: 3, label: '较低提取率', desc: '同等消费需要更多目标资产，仍受退休年限和市场波动影响' },
+            { min: 3, max: 4, label: '提取率假设', desc: '用于计算目标资产，不能保证退休后的资金持续性' },
+            { min: 4, max: 10, label: '较高提取率', desc: '目标资产较少，对退休后的收益和支出更敏感' }
         ],
         rate: [
-            { min: 3, max: 5, label: '保守', desc: '纯债券/存款，几乎无风险' },
-            { min: 5, max: 7, label: '稳健', desc: '债券为主+少量股票，历史长期均值' },
-            { min: 7, max: 9, label: '适中', desc: '股债混合配置，长期市场均值' },
-            { min: 9, max: 12, label: '积极', desc: '股票为主，适合风险承受能力强的投资者' },
-            { min: 12, max: 15, label: '激进', desc: '高风险高收益，需要较强的投资能力' }
+            { min: -99, max: 30, label: '固定收益假设', desc: '按有效年收益率计算，未模拟市场波动、税费和投资成本' }
         ],
         inflationRate: [
-            { min: 1, max: 2, label: '低通胀', desc: '通缩或低通胀环境，如日本近年' },
-            { min: 2, max: 3, label: '正常', desc: '央行目标通胀率，发达国家典型值' },
-            { min: 3, max: 5, label: '温和通胀', desc: '发展中国家或通胀较高时期' },
-            { min: 5, max: 8, label: '高通胀', desc: '需要警惕，实际购买力下降较快' },
-            { min: 8, max: 15, label: '恶性通胀', desc: '需要采取特殊资产配置策略' }
+            { min: 0, max: 30, label: '通胀假设', desc: '生活费和目标资产按此比例逐年增长' }
         ]
     },
 
@@ -75,7 +62,7 @@ const FireCalculator = {
      * 计算FIRE目标资产
      */
     calcTargetAsset(annualExpense, withdrawRate) {
-        return annualExpense / (withdrawRate || this.DEFAULTS.WITHDRAW_RATE);
+        return annualExpense / (withdrawRate ?? this.DEFAULTS.WITHDRAW_RATE);
     },
 
     /**
@@ -110,28 +97,40 @@ const FireCalculator = {
      * 计算房贷详细信息
      */
     calcMortgageInfo(mortgage) {
-        if (!mortgage || !mortgage.housePrice || mortgage.housePrice <= 0) {
-            return { hasMortgage: false };
-        }
-
-        const downPaymentRate = mortgage.downPaymentRate || this.DEFAULTS.DOWN_PAYMENT_RATE;
-        const mortgageRate = mortgage.rate || this.DEFAULTS.MORTGAGE_RATE;
-        const mortgageYears = mortgage.years || this.DEFAULTS.MORTGAGE_YEARS;
-
-        const downPayment = mortgage.housePrice * downPaymentRate;
-        const loanPrincipal = mortgage.housePrice - downPayment;
-        const annualPayment = this.calcAnnualMortgage(loanPrincipal, mortgageRate, mortgageYears);
-        const totalPayment = annualPayment * mortgageYears;
-
+        const m = this.getMortgageParams(mortgage);
+        if (!m) return { hasMortgage: false };
+        const downPayment = m.housePrice * m.downPaymentRate;
+        const loans = this.getMortgageLoans(m).map(loan => {
+            const monthlyPayment = this.calcMonthlyMortgage(loan.principal, loan.rate, loan.years);
+            const totalPayment = monthlyPayment * loan.years * 12;
+            return { ...loan, monthlyPayment, totalPayment, totalInterest: totalPayment - loan.principal };
+        });
+        const monthlyPayment = loans.reduce((sum, loan) => sum + loan.monthlyPayment, 0);
+        const totalPayment = loans.reduce((sum, loan) => sum + loan.totalPayment, 0);
         return {
-            hasMortgage: true,
-            housePrice: mortgage.housePrice,
-            downPayment: this.round(downPayment),
-            loanPrincipal: this.round(loanPrincipal),
-            annualPayment: this.round(annualPayment),
-            totalPayment: this.round(totalPayment),
-            totalInterest: this.round(totalPayment - loanPrincipal)
+            hasMortgage: true, housePrice: m.housePrice,
+            downPayment: this.round(downPayment), loanPrincipal: this.round(m.housePrice - downPayment),
+            monthlyPayment: this.round(monthlyPayment), annualPayment: this.round(monthlyPayment * 12),
+            totalPayment: this.round(totalPayment), totalInterest: this.round(totalPayment - (m.housePrice - downPayment)),
+            loans
         };
+    },
+
+    // 两部分分别计息和到期，保留原有纯商贷参数的兼容性。
+    getMortgageLoans(mortgage) {
+        const m = this.getMortgageParams(mortgage);
+        if (!m) return [];
+        const total = m.housePrice * (1 - m.downPaymentRate);
+        const provident = m.provident?.principal ?? 0;
+        const loans = [];
+        if (total - provident > 0) loans.push({ kind: 'commercial', principal: total - provident, rate: m.rate, years: m.years });
+        if (provident > 0) loans.push({ kind: 'provident', principal: provident,
+            rate: m.provident.rate, years: m.provident.years ?? m.years });
+        return loans;
+    },
+
+    getProvidentRate(homeType = 'first', years = 30) {
+        return homeType === 'second' ? (years <= 5 ? 0.02525 : 0.03075) : (years <= 5 ? 0.021 : 0.026);
     },
 
     /**
@@ -142,12 +141,13 @@ const FireCalculator = {
             return null;
         }
         return {
+            provident: mortgage.provident,
             housePrice: mortgage.housePrice,
             purchaseYear: mortgage.purchaseYear,
-            purchaseMonth: mortgage.purchaseMonth || this.DEFAULTS.PURCHASE_MONTH,
-            downPaymentRate: mortgage.downPaymentRate || this.DEFAULTS.DOWN_PAYMENT_RATE,
-            rate: mortgage.rate || this.DEFAULTS.MORTGAGE_RATE,
-            years: mortgage.years || this.DEFAULTS.MORTGAGE_YEARS
+            purchaseMonth: mortgage.purchaseMonth ?? this.DEFAULTS.PURCHASE_MONTH,
+            downPaymentRate: mortgage.downPaymentRate ?? this.DEFAULTS.DOWN_PAYMENT_RATE,
+            rate: mortgage.rate ?? this.DEFAULTS.MORTGAGE_RATE,
+            years: mortgage.years ?? this.DEFAULTS.MORTGAGE_YEARS
         };
     },
 
@@ -157,12 +157,11 @@ const FireCalculator = {
     getMortgagePaymentForYear(year, mortgage) {
         const m = this.getMortgageParams(mortgage);
         if (!m) return 0;
-        if (year <= m.purchaseYear) return 0;
-        if (year > m.purchaseYear + m.years) return 0;
-
-        const downPayment = m.housePrice * m.downPaymentRate;
-        const loanPrincipal = m.housePrice - downPayment;
-        return this.calcAnnualMortgage(loanPrincipal, m.rate, m.years);
+        let total = 0;
+        for (let month = 1; month <= 12; month++) {
+            total += this.getMortgagePaymentForMonth(year, month, m);
+        }
+        return total;
     },
 
     /**
@@ -179,11 +178,8 @@ const FireCalculator = {
 
         // 计算已还款月数
         const monthsElapsed = (year - m.purchaseYear) * 12 + (month - m.purchaseMonth);
-        if (monthsElapsed >= m.years * 12) return 0;
-
-        const downPayment = m.housePrice * m.downPaymentRate;
-        const loanPrincipal = m.housePrice - downPayment;
-        return this.calcMonthlyMortgage(loanPrincipal, m.rate, m.years);
+        return this.getMortgageLoans(m).reduce((sum, loan) => sum +
+            (monthsElapsed < loan.years * 12 ? this.calcMonthlyMortgage(loan.principal, loan.rate, loan.years) : 0), 0);
     },
 
     /**
@@ -215,365 +211,138 @@ const FireCalculator = {
         return baseSaving * Math.pow(1 + inflationRate, yearsElapsed);
     },
 
-    /**
-     * 按年模拟资产增长轨迹
-     */
-    simulateYearly({ startYear, startAsset, rate, inflationRate = 0, annualSaving, savingGrowWithInflation = false, years, mortgage = null }) {
-        const trajectory = [];
+    // 所有轨迹从起始年 1 月 1 日开始。现金流在期末发生，记录下一期初的余额。
+    // 按年模式把该年的首付和月供汇总至年末；按月模式在各月末扣款。
+    _simulate(params) {
+        const { startYear, startAsset, annualSaving = 0, rate, inflationRate = 0,
+            savingGrowWithInflation = false, monthlyCalc = false, years, mortgage = null } = params;
+        const periods = monthlyCalc ? 12 : 1;
+        const periodRate = Math.expm1(Math.log1p(rate) / periods);
         let asset = startAsset;
-
-        for (let i = 0; i <= years; i++) {
-            const year = startYear + i;
-            const mortgagePayment = this.getMortgagePaymentForYear(year, mortgage);
-            const downPayment = this.getDownPaymentForYear(year, mortgage);
-            const saving = this.getSavingForYear(year, annualSaving, inflationRate, savingGrowWithInflation, startYear);
-
-            // 年末资产 = 年初资产 × (1+利率) + 储蓄 - 首付 - 房贷
-            asset = asset * (1 + rate) + saving - downPayment - mortgagePayment;
-
-            const realAsset = inflationRate > 0 ? asset / Math.pow(1 + inflationRate, i) : asset;
-            trajectory.push({
-                year,
-                asset: this.round(asset),
-                realAsset: this.round(realAsset),
-                mortgagePayment: this.round(mortgagePayment),
-                downPayment: this.round(downPayment)
-            });
-        }
-
-        return trajectory;
-    },
-
-    /**
-     * 按月模拟资产增长轨迹
-     */
-    simulateMonthly({ startYear, startAsset, rate, inflationRate = 0, annualSaving, savingGrowWithInflation = false, years, mortgage = null }) {
-        const trajectory = [];
-        let asset = startAsset;
-        const monthlyRate = rate / 12;
-        const monthlyInflation = inflationRate / 12;
+        let savingWeight = 0;
         let cumulativeMortgage = 0;
-
-        for (let i = 0; i <= years * 12; i++) {
-            const year = startYear + Math.floor(i / 12);
-            const month = (i % 12) + 1;
-
-            if (i < years * 12) {
-                const yearlySaving = this.getSavingForYear(year, annualSaving, inflationRate, savingGrowWithInflation, startYear);
-                const monthlySaving = yearlySaving / 12;
-                const mortgagePayment = this.getMortgagePaymentForMonth(year, month, mortgage);
-                const downPayment = this.getDownPaymentForMonth(year, month, mortgage);
-
-                // 更新资产和累计房贷
-                asset = asset * (1 + monthlyRate) + monthlySaving - downPayment - mortgagePayment;
+        const trajectory = [];
+        for (let step = 0; step <= Math.round(years * periods); step++) {
+            let mortgagePayment = 0;
+            let downPayment = 0;
+            if (step > 0) {
+                const cashYear = startYear + Math.floor((step - 1) / periods);
+                const cashMonth = (step - 1) % periods + 1;
+                mortgagePayment = monthlyCalc
+                    ? this.getMortgagePaymentForMonth(cashYear, cashMonth, mortgage)
+                    : this.getMortgagePaymentForYear(cashYear, mortgage);
+                downPayment = monthlyCalc
+                    ? this.getDownPaymentForMonth(cashYear, cashMonth, mortgage)
+                    : this.getDownPaymentForYear(cashYear, mortgage);
+                const weight = this.getSavingForYear(cashYear, 1, inflationRate, savingGrowWithInflation, startYear) / periods;
+                savingWeight = savingWeight * (1 + periodRate) + weight;
+                asset = asset * (1 + periodRate) + annualSaving * weight - downPayment - mortgagePayment;
                 cumulativeMortgage += downPayment + mortgagePayment;
             }
-
-            // 每年1月或首月记录
-            if (month === 1 || i === 0) {
-                const realAsset = inflationRate > 0 ? asset / Math.pow(1 + monthlyInflation, i) : asset;
-                trajectory.push({
-                    year,
-                    month,
-                    asset: this.round(asset),
-                    realAsset: this.round(realAsset),
-                    cumulativeMortgage: this.round(cumulativeMortgage)
-                });
-            }
+            const elapsedYears = step / periods;
+            trajectory.push({
+                year: startYear + Math.floor(elapsedYears),
+                month: monthlyCalc ? step % 12 + 1 : undefined,
+                elapsedYears,
+                asset,
+                realAsset: asset / Math.pow(1 + inflationRate, elapsedYears),
+                mortgagePayment, downPayment, cumulativeMortgage, savingWeight
+            });
         }
-
         return trajectory;
     },
 
-    /**
-     * 模式1：计算所需每年储蓄
-     */
-    calcRequiredSaving({ startYear, startAsset, targetYear, annualExpense, withdrawRate = this.DEFAULTS.WITHDRAW_RATE, rate, inflationRate = 0, savingGrowWithInflation = false, monthlyCalc = false, mortgage = null }) {
-        const baseTargetAsset = this.calcTargetAsset(annualExpense, withdrawRate);
-        const years = targetYear - startYear;
+    simulateYearly(params) { return this._simulate({ ...params, monthlyCalc: false }); },
+    simulateMonthly(params) { return this._simulate({ ...params, monthlyCalc: true }); },
+    getTrajectory(params) { return this._simulate(params); },
 
-        if (years <= 0) return { error: '目标年份必须大于起始年份' };
-
-        const targetAsset = this.adjustForInflation(baseTargetAsset, inflationRate, years);
-
-        if (savingGrowWithInflation) {
-            return this._calcSavingWithGrowth({ startYear, startAsset, baseTargetAsset, targetAsset, years, rate, inflationRate, monthlyCalc, mortgage });
+    validate(mode, p) {
+        const range = (value, min, max) => Number.isFinite(value) && value >= min && value <= max;
+        const year = value => Number.isInteger(value) && range(value, 1900, 9999);
+        if (!year(p.startYear)) return '起始年份须为 1900 至 9999 的整数';
+        if (!range(p.startAsset, 0, 1e12)) return '起始资金须为 0 至 1 万亿元';
+        if (!range(p.annualExpense, 0.01, 1e12)) return '每年消费须大于 0，且不超过 1 万亿元';
+        if (!range(p.withdrawRate ?? this.DEFAULTS.WITHDRAW_RATE, 0.0001, 1)) return '提取率须在 0.01% 至 100% 之间';
+        if (!range(p.rate, -0.99, 0.3)) return '年收益率须在 -99% 至 30% 之间';
+        if (!range(p.inflationRate ?? 0, 0, 0.3)) return '通胀率须在 0% 至 30% 之间';
+        if (mode === 'saving' && (!year(p.targetYear) || p.targetYear <= p.startYear || p.targetYear - p.startYear > 100)) {
+            return '目标年份须晚于起始年份，且相隔不超过 100 年';
         }
-
-        if (monthlyCalc) {
-            return this._calcSavingMonthly({ startYear, startAsset, baseTargetAsset, targetAsset, years, rate, inflationRate, mortgage });
-        }
-
-        return this._calcSavingYearly({ startYear, startAsset, baseTargetAsset, targetAsset, years, rate, inflationRate, mortgage });
-    },
-
-    _calcSavingWithGrowth({ startYear, startAsset, baseTargetAsset, targetAsset, years, rate, inflationRate, monthlyCalc, mortgage }) {
-        const tolerance = monthlyCalc
-            ? this.DEFAULTS.BINARY_TOLERANCE_MONTHLY
-            : this.DEFAULTS.BINARY_TOLERANCE_YEARLY;
-        let low = 0;
-        let high = targetAsset;
-        let mid;
-        let trajectory;
-
-        for (let iter = 0; iter < this.DEFAULTS.MAX_BINARY_ITERATIONS; iter++) {
-            mid = (low + high) / 2;
-
-            let finalAsset;
-            if (monthlyCalc) {
-                trajectory = this.simulateMonthly({
-                    startYear, startAsset, rate, inflationRate,
-                    annualSaving: mid * 12,
-                    savingGrowWithInflation: true,
-                    years, mortgage
-                });
-                finalAsset = trajectory[trajectory.length - 1].asset;
-            } else {
-                trajectory = this.simulateYearly({
-                    startYear, startAsset, rate, inflationRate,
-                    annualSaving: mid,
-                    savingGrowWithInflation: true,
-                    years, mortgage
-                });
-                finalAsset = trajectory[trajectory.length - 1].asset;
-            }
-
-            if (Math.abs(finalAsset - targetAsset) < tolerance) {
-                break;
-            }
-
-            if (finalAsset < targetAsset) {
-                low = mid;
-            } else {
-                high = mid;
+        if (mode === 'year' && !range(p.annualSaving, 0, 1e12)) return '每年储蓄须为 0 至 1 万亿元';
+        if (p.mortgage) {
+            const m = p.mortgage;
+            if (!year(m.purchaseYear) || m.purchaseYear < p.startYear) return '购房年份须为不早于起始年份的整数';
+            if (!range(m.housePrice, 0.01, 1e12)) return '房屋总价须大于 0，且不超过 1 万亿元';
+            if (!range(m.downPaymentRate ?? this.DEFAULTS.DOWN_PAYMENT_RATE, 0, 1)) return '首付比例须在 0% 至 100% 之间';
+            if (!range(m.rate ?? this.DEFAULTS.MORTGAGE_RATE, 0, 0.2)) return '房贷利率须在 0% 至 20% 之间';
+            const years = m.years ?? this.DEFAULTS.MORTGAGE_YEARS;
+            if (!Number.isInteger(years) || !range(years, 1, 50)) return '还款期限须为 1 至 50 年的整数';
+            const month = m.purchaseMonth ?? this.DEFAULTS.PURCHASE_MONTH;
+            if (!Number.isInteger(month) || !range(month, 1, 12)) return '购房月份须为 1 至 12 的整数';
+            if (m.provident) {
+                const total = m.housePrice * (1 - (m.downPaymentRate ?? this.DEFAULTS.DOWN_PAYMENT_RATE));
+                if (!range(m.provident.principal, 0, total)) return '公积金贷款金额须在 0 与贷款总额之间';
+                if (!range(m.provident.rate, 0, 0.2)) return '公积金贷款利率须在 0% 至 20% 之间';
+                const providentYears = m.provident.years ?? years;
+                if (!Number.isInteger(providentYears) || !range(providentYears, 1, 30)) return '公积金还款期限须为 1 至 30 年的整数';
             }
         }
-
-        return this._buildSavingResult(monthlyCalc, mid, baseTargetAsset, targetAsset, years, true, mortgage, trajectory);
+        return null;
     },
 
-    _calcSavingYearly({ startYear, startAsset, baseTargetAsset, targetAsset, years, rate, inflationRate, mortgage }) {
-        const factor = Math.pow(1 + rate, years);
-        const annuityFactor = rate === 0 ? years : (factor - 1) / rate;
-
-        let mortgageFutureValue = 0;
-        for (let i = 0; i < years; i++) {
-            const year = startYear + i;
-            const mortgagePayment = this.getMortgagePaymentForYear(year, mortgage);
-            const downPayment = this.getDownPaymentForYear(year, mortgage);
-            mortgageFutureValue += (mortgagePayment + downPayment) * Math.pow(1 + rate, years - i - 1);
-        }
-
-        const requiredSaving = (targetAsset - startAsset * factor + mortgageFutureValue) / annuityFactor;
-
-        return {
-            success: true,
-            mode: 'saving',
-            calculationMode: 'yearly',
-            baseTargetAsset: this.round(baseTargetAsset),
-            targetAsset: this.round(targetAsset),
-            requiredSaving: this.round(requiredSaving),
-            savingGrowWithInflation: false,
-            years,
-            mortgageInfo: this.calcMortgageInfo(mortgage)
-        };
-    },
-
-    _calcSavingMonthly({ startYear, startAsset, baseTargetAsset, targetAsset, years, rate, inflationRate, mortgage }) {
-        const monthlyRate = rate / 12;
-        const totalMonths = years * 12;
-        const factor = Math.pow(1 + monthlyRate, totalMonths);
-        const annuityFactor = monthlyRate === 0 ? totalMonths : (factor - 1) / monthlyRate;
-
-        let mortgageFutureValue = 0;
-        for (let i = 0; i < totalMonths; i++) {
-            const year = startYear + Math.floor(i / 12);
-            const month = (i % 12) + 1;
-            const mortgagePayment = this.getMortgagePaymentForMonth(year, month, mortgage);
-            const downPayment = this.getDownPaymentForMonth(year, month, mortgage);
-            mortgageFutureValue += (mortgagePayment + downPayment) * Math.pow(1 + monthlyRate, totalMonths - i - 1);
-        }
-
-        const requiredMonthlySaving = (targetAsset - startAsset * factor + mortgageFutureValue) / annuityFactor;
-        const requiredAnnualSaving = requiredMonthlySaving * 12;
-
-        return {
-            success: true,
-            mode: 'saving',
-            calculationMode: 'monthly',
-            baseTargetAsset: this.round(baseTargetAsset),
-            targetAsset: this.round(targetAsset),
-            requiredMonthlySaving: this.round(requiredMonthlySaving),
-            requiredAnnualSaving: this.round(requiredAnnualSaving),
-            savingGrowWithInflation: false,
-            years,
-            mortgageInfo: this.calcMortgageInfo(mortgage)
-        };
-    },
-
-    _buildSavingResult(monthlyCalc, saving, baseTargetAsset, targetAsset, years, growWithInflation, mortgage = null, trajectory = null) {
+    calcRequiredSaving(params) {
+        const error = this.validate('saving', params);
+        if (error) return { error };
+        const years = params.targetYear - params.startYear;
+        const baseTargetAsset = this.calcTargetAsset(params.annualExpense, params.withdrawRate);
+        const targetAsset = this.adjustForInflation(baseTargetAsset, params.inflationRate ?? 0, years);
+        // 现金流对储蓄额是线性的。直接累计每元储蓄的终值，避免二分上界不足。
+        const baseline = this._simulate({ ...params, years, annualSaving: 0 }).at(-1);
+        const annualSaving = Math.max(0, (targetAsset - baseline.asset) / baseline.savingWeight);
+        const periods = params.monthlyCalc ? 12 : 1;
+        // 向上取整到分，使显示金额足以达到目标。
+        const periodicSaving = Math.ceil(annualSaving / periods * 100) / 100;
         const result = {
-            success: true,
-            mode: 'saving',
-            calculationMode: monthlyCalc ? 'monthly' : 'yearly',
-            baseTargetAsset: this.round(baseTargetAsset),
-            targetAsset: this.round(targetAsset),
-            savingGrowWithInflation: growWithInflation,
-            years,
-            mortgageInfo: this.calcMortgageInfo(mortgage)
+            success: true, mode: 'saving', calculationMode: params.monthlyCalc ? 'monthly' : 'yearly',
+            baseTargetAsset: this.round(baseTargetAsset), targetAsset: this.round(targetAsset), years,
+            savingGrowWithInflation: params.savingGrowWithInflation ?? false,
+            noAdditionalSaving: periodicSaving === 0,
+            mortgageInfo: this.calcMortgageInfo(params.mortgage),
+            trajectory: this._simulate({ ...params, years, annualSaving: periodicSaving * periods })
         };
-
-        if (trajectory) {
-            result.trajectory = trajectory;
-        }
-
-        if (monthlyCalc) {
-            result.requiredMonthlySaving = this.round(saving);
-            result.requiredAnnualSaving = this.round(saving * 12);
-        } else {
-            result.requiredSaving = this.round(saving);
-        }
-
+        if (params.monthlyCalc) {
+            result.requiredMonthlySaving = periodicSaving;
+            result.requiredAnnualSaving = this.round(periodicSaving * 12);
+        } else result.requiredSaving = periodicSaving;
         return result;
     },
 
-    /**
-     * 模式2：计算达成年份
-     */
-    calcAchievementYear({ startYear, startAsset, annualExpense, withdrawRate = this.DEFAULTS.WITHDRAW_RATE, rate, inflationRate = 0, annualSaving, savingGrowWithInflation = false, monthlyCalc = false, mortgage = null }) {
-        const baseTargetAsset = this.calcTargetAsset(annualExpense, withdrawRate);
-
-        if (monthlyCalc) {
-            return this._calcYearMonthly({ startYear, startAsset, baseTargetAsset, rate, inflationRate, annualSaving, savingGrowWithInflation, mortgage });
-        }
-
-        return this._calcYearYearly({ startYear, startAsset, baseTargetAsset, rate, inflationRate, annualSaving, savingGrowWithInflation, mortgage });
+    calcAchievementYear(params) {
+        const error = this.validate('year', params);
+        if (error) return { error };
+        const baseTargetAsset = this.calcTargetAsset(params.annualExpense, params.withdrawRate);
+        const all = this._simulate({ ...params, years: this.DEFAULTS.MAX_SIMULATE_YEARS });
+        const index = all.findIndex(p => p.asset >= this.adjustForInflation(baseTargetAsset, params.inflationRate ?? 0, p.elapsedYears));
+        if (index < 0) return { error: '按当前参数，100 年内无法达到目标资产' };
+        const point = all[index];
+        return {
+            success: true, mode: 'year', calculationMode: params.monthlyCalc ? 'monthly' : 'yearly',
+            baseTargetAsset: this.round(baseTargetAsset),
+            targetAsset: this.round(this.adjustForInflation(baseTargetAsset, params.inflationRate ?? 0, point.elapsedYears)),
+            achievementYear: point.year, achievementMonth: point.month,
+            monthsNeeded: params.monthlyCalc ? index : index * 12,
+            yearsNeeded: this.round(point.elapsedYears), alreadyAchieved: index === 0,
+            trajectory: all.slice(0, index + 1), mortgageInfo: this.calcMortgageInfo(params.mortgage)
+        };
     },
 
-    _calcYearYearly({ startYear, startAsset, baseTargetAsset, rate, inflationRate, annualSaving, savingGrowWithInflation, mortgage }) {
-        let asset = startAsset;
-        const maxYears = this.DEFAULTS.MAX_SIMULATE_YEARS;
-        const trajectory = [];
-
-        for (let i = 0; i <= maxYears; i++) {
-            const year = startYear + i;
-            const mortgagePayment = this.getMortgagePaymentForYear(year, mortgage);
-            const downPayment = this.getDownPaymentForYear(year, mortgage);
-            const saving = this.getSavingForYear(year, annualSaving, inflationRate, savingGrowWithInflation, startYear);
-
-            asset = asset * (1 + rate) + saving - downPayment - mortgagePayment;
-
-            const targetAsset = this.adjustForInflation(baseTargetAsset, inflationRate, i);
-            const realAsset = inflationRate > 0 ? asset / Math.pow(1 + inflationRate, i) : asset;
-
-            trajectory.push({
-                year,
-                asset: this.round(asset),
-                realAsset: this.round(realAsset),
-                mortgagePayment: this.round(mortgagePayment),
-                downPayment: this.round(downPayment)
-            });
-
-            if (asset >= targetAsset) {
-                return {
-                    success: true,
-                    mode: 'year',
-                    calculationMode: 'yearly',
-                    baseTargetAsset: this.round(baseTargetAsset),
-                    targetAsset: this.round(targetAsset),
-                    achievementYear: year,
-                    yearsNeeded: i,
-                    trajectory,
-                    mortgageInfo: this.calcMortgageInfo(mortgage)
-                };
-            }
-        }
-
-        return { error: '100年内无法达成FIRE目标' };
-    },
-
-    _calcYearMonthly({ startYear, startAsset, baseTargetAsset, rate, inflationRate, annualSaving, savingGrowWithInflation, mortgage }) {
-        let asset = startAsset;
-        const monthlyRate = rate / 12;
-        const monthlyInflation = inflationRate / 12;
-        const maxMonths = this.DEFAULTS.MAX_SIMULATE_YEARS * 12;
-        let cumulativeMortgage = 0;
-        const trajectory = [];
-
-        for (let i = 0; i < maxMonths; i++) {
-            const year = startYear + Math.floor(i / 12);
-            const month = (i % 12) + 1;
-
-            // 计算当月房贷
-            const monthlyMortgage = this.getMortgagePaymentForMonth(year, month, mortgage);
-            const monthlyDown = this.getDownPaymentForMonth(year, month, mortgage);
-
-            // 更新资产和累计房贷
-            const yearlySaving = this.getSavingForYear(year, annualSaving, inflationRate, savingGrowWithInflation, startYear);
-            const monthlySaving = yearlySaving / 12;
-            asset = asset * (1 + monthlyRate) + monthlySaving - monthlyDown - monthlyMortgage;
-            cumulativeMortgage += monthlyDown + monthlyMortgage;
-
-            // 每年1月或首月记录
-            if (month === 1 || i === 0) {
-                const targetAsset = this.adjustForInflation(baseTargetAsset, inflationRate, i / 12);
-                const realAsset = inflationRate > 0 ? asset / Math.pow(1 + monthlyInflation, i) : asset;
-
-                trajectory.push({
-                    year,
-                    month,
-                    asset: this.round(asset),
-                    realAsset: this.round(realAsset),
-                    cumulativeMortgage: this.round(cumulativeMortgage)
-                });
-
-                if (asset >= targetAsset) {
-                    return {
-                        success: true,
-                        mode: 'year',
-                        calculationMode: 'monthly',
-                        baseTargetAsset: this.round(baseTargetAsset),
-                        targetAsset: this.round(targetAsset),
-                        achievementYear: year,
-                        achievementMonth: month,
-                        monthsNeeded: i,
-                        yearsNeeded: this.round(i / 12),
-                        trajectory,
-                        mortgageInfo: this.calcMortgageInfo(mortgage)
-                    };
-                }
-            }
-        }
-
-        return { error: '100年内无法达成FIRE目标' };
-    },
-
-    /**
-     * 通用计算入口
-     */
     calculate(mode, params) {
-        switch (mode) {
-            case 'saving':
-                return this.calcRequiredSaving(params);
-            case 'year':
-                return this.calcAchievementYear(params);
-            default:
-                return { error: '未知模式' };
-        }
-    },
-
-    /**
-     * 获取资产轨迹
-     */
-    getTrajectory(params) {
-        const { monthlyCalc = false } = params;
-        if (monthlyCalc) {
-            return this.simulateMonthly(params);
-        }
-        return this.simulateYearly(params);
+        if (mode === 'saving') return this.calcRequiredSaving(params);
+        if (mode === 'year') return this.calcAchievementYear(params);
+        return { error: '未知模式' };
     }
 };
 
-if (typeof module !== 'undefined' && module.exports) {
-    module.exports = FireCalculator;
-}
+if (typeof module !== 'undefined' && module.exports) module.exports = FireCalculator;
+
+if (typeof window !== 'undefined') window.FireCalculator = FireCalculator;

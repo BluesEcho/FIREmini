@@ -1,0 +1,8 @@
+{
+  "name": "firemini",
+  "version": "1.0.0",
+  "private": true,
+  "description": "FIRE 财务自由计算器与引导填写",
+  "scripts": { "test": "node --test", "start": "python3 -m http.server 8765 --bind 127.0.0.1" },
+  "devDependencies": { "jsdom": "^26.1.0" }
+}

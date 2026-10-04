@@ -14,6 +14,7 @@
     const number = value => value === '' || value == null ? NaN : Number(value);
     const loanTotal = s => number(s.housePrice) * (1 - (s.fullCash ? 1 : number(s.downPaymentRate) / 100));
     const hasLoan = s => s.house && !s.fullCash && number(s.downPaymentRate) < 100;
+    const hasCommercialLoan = s => hasLoan(s) && (!s.provident || number(s.providentAmount) < loanTotal(s));
     const providentYears = s => s.separateYears ? number(s.providentYears) : number(s.mortgageYears);
     function set(s, key, value) {
         if ((key === 'expenseUnit' || key === 'savingUnit') && s[key] !== value) {
@@ -40,7 +41,7 @@
         if (s.house) {
             p.mortgage = { purchaseYear: number(s.purchaseYear), housePrice: number(s.housePrice),
                 downPaymentRate: s.fullCash ? 1 : number(s.downPaymentRate) / 100,
-                rate: hasLoan(s) ? number(s.mortgageRate) / 100 : 0,
+                rate: hasCommercialLoan(s) ? number(s.mortgageRate) / 100 : 0,
                 years: hasLoan(s) ? number(s.mortgageYears) : 30 };
             if (hasLoan(s) && s.provident) p.mortgage.provident = {
                 principal: number(s.providentAmount), rate: number(s.providentRate) / 100, years: providentYears(s)
@@ -67,7 +68,7 @@
             if (!s.fullCash) check('downPaymentRate', 0, 100, '首付比例');
         }
         if (step === 'loan' && hasLoan(s)) {
-            check('mortgageRate', 0, 20, '商贷年利率');
+            if (hasCommercialLoan(s)) check('mortgageRate', 0, 20, '商贷年利率');
             check('mortgageYears', 1, s.provident && !s.separateYears ? 30 : 50, '还款期限', true);
             if (s.provident) {
                 check('providentAmount', 0.01, Math.max(0, loanTotal(s)), '公积金贷款金额');

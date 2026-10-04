@@ -180,3 +180,51 @@ test('图表时间滑块同步指示线与准确金额', t => {
     assert.equal(Number(p.q('#chart-cursor').getAttribute('x1')), 504);
     assert.equal(Number(p.q('#chart-point').getAttribute('cx')), 504);
 });
+
+test('月供预估不依赖购房年份，并明确指出缺失或超限参数', t => {
+    const p = page(t);
+    p.fill('house', true);
+    assert.match(p.q('#loan-estimate').textContent, /请填写房屋总价/);
+    p.fill('housePrice', 1000000);
+    p.fill('purchaseYear', 2000);
+    assert.match(p.q('#loan-estimate').textContent, /预计每月还款 3,143.31 元/);
+    assert.match(p.q('#loan-estimate').textContent, /购房年份/);
+    p.fill('provident', true);
+    assert.match(p.q('#loan-estimate').textContent, /请填写公积金贷款金额/);
+    p.fill('providentAmount', 800000);
+    assert.match(p.q('#loan-estimate').textContent, /公积金贷款金额须为/);
+    p.fill('providentAmount', 700000);
+    p.fill('mortgageRate', '');
+    assert.match(p.q('#loan-estimate').textContent, /预计每月还款/);
+    p.fill('purchaseYear', Number(p.q('#startYear').value) + 2);
+    p.choose('mode', 'year'); p.fill('expense', 6000); p.fill('saving', 10000);
+    p.submit();
+    assert.ok(p.q('.result-primary'));
+    assert.equal(p.q('[aria-invalid="true"]'), null);
+});
+
+for (const mode of ['year', 'saving']) test(`不支持 Array.at 时核对页返回和计算正常：${mode}`, t => {
+    const p = page(t);
+    p.w.eval('Array.prototype.at = undefined');
+    const errors = [];
+    p.w.addEventListener('error', e => errors.push(e.message));
+    p.choose('mode', mode); p.fill('expense', 6000);
+    if (mode === 'year') p.fill('saving', 10000);
+    else p.fill('targetYear', Number(p.q('#startYear').value) + 20);
+    p.click('#guideToggle'); p.click('[data-action="start"]');
+    for (let i = 0; i < 10; i++) p.click('button[type="submit"]');
+    assert.equal(p.q('h1').textContent, '确认你的计划');
+    p.click('[data-action="back"]');
+    assert.ok(p.q('#withdrawRate'));
+    p.click('button[type="submit"]');
+    assert.equal(p.q('h1').textContent, '确认你的计划');
+    p.click('button[type="submit"]');
+    assert.ok(p.q('.result-primary'));
+    p.click('#guideToggle');
+    assert.ok(p.q('[data-action="start"]'));
+    p.click('#guideToggle');
+    assert.ok(p.q('#plan-form'));
+    assert.ok(p.q('.result-primary'));
+    assert.match(p.q('#guideToggle').textContent, /引导填写/);
+    assert.deepEqual(errors, []);
+});

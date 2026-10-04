@@ -297,7 +297,8 @@ const FireCalculator = {
         const baseTargetAsset = this.calcTargetAsset(params.annualExpense, params.withdrawRate);
         const targetAsset = this.adjustForInflation(baseTargetAsset, params.inflationRate ?? 0, years);
         // 现金流对储蓄额是线性的。直接累计每元储蓄的终值，避免二分上界不足。
-        const baseline = this._simulate({ ...params, years, annualSaving: 0 }).at(-1);
+        const baselinePoints = this._simulate({ ...params, years, annualSaving: 0 });
+        const baseline = baselinePoints[baselinePoints.length - 1];
         const annualSaving = Math.max(0, (targetAsset - baseline.asset) / baseline.savingWeight);
         const periods = params.monthlyCalc ? 12 : 1;
         // 向上取整到分，使显示金额足以达到目标。

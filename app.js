@@ -8,7 +8,7 @@
         return;
     }
     const state = P.defaults();
-    let view = 'main', current = 'intro', fieldErrors = {}, result = null, resultParams = null, dirty = false, returnToReview = false;
+    let view = 'guide', current = 'intro', fieldErrors = {}, result = null, resultParams = null, dirty = false, returnToReview = false;
     const app = document.getElementById('app');
     const reducedMotion = () => window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false;
     const scrollBehavior = () => reducedMotion() ? 'instant' : 'smooth';
@@ -59,7 +59,7 @@
     const titles = {
         purpose: '你想计算什么？', start: '从哪一年开始计算？', asset: '开始时，你有多少资金可以投入？',
         expense: '达到财务自由后，你希望花多少钱生活？', saving: '你能为这个计划存下多少钱？', target: '你希望在哪一年达到目标？',
-        house: '准备什么时候买房，预算是多少？', loan: '这笔贷款准备怎么安排？', inflation: '预计物价每年上涨多少？',
+        house: '要把购房计入这次计划吗？', loan: '这笔贷款准备怎么安排？', inflation: '预计物价每年上涨多少？',
         growth: '以后每年存入的钱要增加吗？', return: '预计投资平均每年获得多少收益？', withdrawal: '用多大的资产规模支撑生活开支？'
     };
     const sources = {
@@ -74,7 +74,7 @@
             case 'expense': return input('expense', '生活支出', '', { min: 0.01, period: 'expenseUnit', help: '按起始年份的物价估计。' });
             case 'saving': return input('saving', '新增储蓄', '', { period: 'savingUnit', help: '填写扣除生活费后、支付本计划首付和房贷前的结余。启用购房计划后，系统会自动扣除首付和还款，请勿提前扣减。投资收益另行计算。' }) + dynamic('saving-hint');
             case 'target': return input('targetYear', 'FIRE 目标年份', '年', { min: P.number(state.startYear) + 1, max: Math.min(9999, P.number(state.startYear) + 100), step: 1 }) + dynamic('target-hint');
-            case 'house': return check('house', '计入未来购房计划') + (state.house ? `<div class="conditional"><div class="two-col">${input('purchaseYear', '购房年份', '年', { min: P.number(state.startYear), max: 9999, step: 1 })}${input('housePrice', '房屋总价', '元', { min: 0.01 })}</div>${check('fullCash', '全款购买')}${!state.fullCash ? input('downPaymentRate', '首付比例', '%', { max: 100 }) : ''}${dynamic('house-estimate', 'estimate')}<p class="note">购房按所选年份的 1 月计算。房屋市值不计入可投资资产。</p>${dynamic('house-warning', 'warning')}</div>` : '<p class="hint">启用后，从计划资金中扣除首付和还款。</p>');
+            case 'house': return (view === 'guide' ? choices('house', [['false', '暂不考虑购房', '直接继续，之后也可以添加。'], ['true', '计入购房计划', '填写房价和首付，计算购房对计划的影响。']]) : check('house', '计入未来购房计划')) + (state.house ? `<div class="conditional"><div class="two-col">${input('purchaseYear', '购房年份', '年', { min: P.number(state.startYear), max: 9999, step: 1 })}${input('housePrice', '房屋总价', '元', { min: 0.01 })}</div>${check('fullCash', '全款购买')}${!state.fullCash ? input('downPaymentRate', '首付比例', '%', { max: 100 }) : ''}${dynamic('house-estimate', 'estimate')}<p class="note">购房按所选年份的 1 月计算。房屋市值不计入可投资资产。</p>${dynamic('house-warning', 'warning')}</div>` : '<p class="hint">启用后，从计划资金中扣除首付和还款。</p>');
             case 'loan': return `<div class="two-col">${input('mortgageYears', state.separateYears && state.provident ? '商贷还款期限' : '还款期限', '年', { min: 1, max: state.provident && !state.separateYears ? 30 : 50, step: 1 })}${input('mortgageRate', '商贷年利率', '%', { max: 20 })}</div><p class="note">商贷默认参考 <a href="${sources.lpr}" target="_blank" rel="noopener">2026 年 9 月的 5 年期以上 LPR 3.50%</a>。实际按银行报价修改，不含财政贴息。</p>${check('provident', '使用公积金贷款')}${state.provident ? `<div class="conditional"><span class="field-label">住房套数</span>${choices('homeType', [['first', '首套住房'], ['second', '二套住房']])}${input('providentAmount', '公积金贷款金额', '元', { min: 0.01, max: P.loanTotal(state) })}<button type="button" class="text-button" data-action="all-provident">全部使用公积金</button><p class="note">金额须在当地批准的可贷额度内，剩余部分自动使用商贷。</p>${dynamic('provident-summary')}<details><summary>公积金利率与更多设置</summary>${input('providentRate', '公积金年利率', '%', { max: 20 })}<button type="button" class="text-button" data-action="auto-provident">恢复按套数和期限确定利率</button>${check('separateYears', '分别设置还款期限')}${state.separateYears ? input('providentYears', '公积金还款期限', '年', { min: 1, max: 30, step: 1 }) : ''}<p>根据<a href="${sources.provident}" target="_blank" rel="noopener">公积金贷款利率表（2025 年 5 月 8 日执行）</a>填入，支持手动修改。</p></details></div>` : ''}${dynamic('loan-estimate', 'estimate')}<p class="note">按等额本息、利率不变计算。还款从新增储蓄中扣除，不足时动用已有资金。例如每月新增储蓄 10,000 元、月供 4,000 元，还贷后剩余 6,000 元用于积累资产。首付在购房时另行扣除。</p>${info('等额本息', '<p>利率不变时，每月偿还相同的总金额，其中包括本金和利息。随着还款进行，本金部分逐渐增加，利息部分逐渐减少。</p>')}`;
             case 'inflation': return input('inflationRate', '预期通胀率', '%', { max: 30, help: '示例值为 2%，用于估算未来维持相同生活水平所需的开支。' }) + dynamic('inflation-hint') + info('通胀与购买力', '<p>通胀表示整体物价水平上涨。金额相同的钱，在未来可能买到更少的商品和服务。</p><p>名义金额是未来实际需要的金额；实际购买力则把它换算成起始年份的物价，方便比较。</p>');
             case 'growth': return `<span class="field-label">每年新增储蓄</span>${choices('grow', [['false', '保持不变', '每年存入相同的金额。'], ['true', '按通胀率增加', `每年增加 ${money(state.inflationRate)}%。`]])}${dynamic('growth-hint')}`;
@@ -235,7 +235,7 @@
         const key = target.dataset.key;
         if (!key) return;
         let value = target.type === 'checkbox' ? target.checked : target.value;
-        if (['grow', 'monthlyCalc'].includes(key)) value = value === true || value === 'true';
+        if (['grow', 'monthlyCalc', 'house'].includes(key)) value = value === true || value === 'true';
         P.set(state, key, value);
         delete fieldErrors[key];
         target.setAttribute('aria-invalid', 'false');

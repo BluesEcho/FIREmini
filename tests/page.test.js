@@ -3,7 +3,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const { JSDOM } = require('jsdom');
 
-function page(t, reduced = false) {
+function page(t, reduced = false, initialGuide = false) {
     const dom = new JSDOM(fs.readFileSync(require.resolve('../index.html'), 'utf8'), { runScripts: 'outside-only', url: 'https://firemini.test/' });
     t.after(() => dom.window.close());
     const w = dom.window;
@@ -14,6 +14,7 @@ function page(t, reduced = false) {
     w.HTMLElement.prototype.scrollIntoView = () => {};
     for (const name of ['fire-calculator.js', 'fire-plan.js', 'app.js']) w.eval(fs.readFileSync(require.resolve('../' + name), 'utf8'));
     const q = selector => w.document.querySelector(selector);
+    if (!initialGuide) q('#guideToggle').click();
     function fill(key, value) {
         const el = q(`[data-key="${key}"]`);
         assert.ok(el, key);
@@ -57,7 +58,7 @@ test('引导完成预测时间，跳过贷款页，按顺序经过通胀与储�
     assert.ok(p.q('#startAsset')); p.submit();
     p.fill('expense', 2000); p.submit();
     p.fill('saving', 100000); p.submit();
-    assert.ok(p.q('#house')); p.submit();
+    assert.ok(p.q('[data-key="house"][value="false"]:checked')); p.submit();
     assert.ok(p.q('#inflationRate')); p.fill('inflationRate', 0); p.submit();
     assert.ok(p.q('[data-key="grow"]')); p.choose('grow', true); p.submit();
     p.fill('rate', 0); p.submit(); p.fill('withdrawRate', 4); p.submit();
@@ -269,4 +270,25 @@ test('旧计算引擎混入时明确提示更新，不继续计算', t => {
     assert.ok(p.q('#reload-page'));
     assert.equal(p.q('#guideToggle').hidden, true);
     assert.equal(p.q('form'), null);
+});
+
+
+test('默认进入引导，购房可跳过、启用和取消，保留已填房价', t => {
+    const p = page(t, false, true);
+    assert.ok(p.q('[data-action="start"]'));
+    assert.equal(p.q('#guideToggle').textContent, '切换到完整表单');
+    p.click('[data-action="start"]'); p.choose('mode', 'year'); p.submit();
+    p.submit(); p.submit(); p.fill('expense', 6000); p.submit();
+    p.fill('saving', 10000); p.submit();
+    assert.equal(p.q('h1').textContent, '要把购房计入这次计划吗？');
+    assert.ok(p.q('[data-key="house"][value="false"]:checked'));
+    assert.equal(p.q('#housePrice'), null);
+    p.submit(); assert.ok(p.q('#inflationRate'));
+    p.click('[data-action="back"]');
+    p.choose('house', 'true'); p.fill('housePrice', 1000000);
+    p.submit(); assert.ok(p.q('#mortgageRate'));
+    p.click('[data-action="back"]'); p.choose('house', 'false');
+    p.submit(); assert.ok(p.q('#inflationRate'));
+    p.click('[data-action="back"]'); p.choose('house', 'true');
+    assert.equal(p.q('#housePrice').value, '1000000');
 });
